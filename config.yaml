@@ -7,12 +7,21 @@ absence_threshold: 3
 # Blur intensity (10-50, higher = more blur)
 blur_amount: 20
 
-# Auto-restore when face returns
+# Auto-restore when owner returns
 auto_restore: true
+
+# Blur screen when stranger detected
+blur_on_stranger: true
 
 # Save face snapshots
 save_snapshots: true
 snapshots_dir: "~/Pictures/PrivacyGuard"
+
+# Data directory for owner encoding
+data_dir: "~/.privacyguard"
+
+# Face recognition tolerance (0.4-0.6, lower = stricter)
+recognition_tolerance: 0.6
 
 # Camera index
 camera_index: 0
