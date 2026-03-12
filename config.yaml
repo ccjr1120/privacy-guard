@@ -1,29 +1,24 @@
 # Detection interval (seconds)
 check_interval: 0.5
 
-# Consecutive absence threshold before locking (prevents accidental triggers)
+# Seconds without face before blur
 absence_threshold: 3
 
-# Enable auto-unlock (experimental feature)
-auto_unlock: false
+# Blur intensity (10-50, higher = more blur)
+blur_amount: 20
 
-# Auto-unlock confidence threshold (0-1)
-unlock_confidence: 0.8
+# Auto-restore when face returns
+auto_restore: true
 
-# Camera index (0 is default camera)
+# Save face snapshots
+save_snapshots: true
+snapshots_dir: "~/Pictures/PrivacyGuard"
+
+# Camera index
 camera_index: 0
-
-# Debug mode (shows camera feed)
-debug: false
-
-# Mac lock command
-lock_command: "osascript -e 'tell application \"System Events\" to keystroke \"q\" using {control down, command down}'"
 
 # Face detection parameters
 face_detection:
-  # Scale factor
   scale_factor: 1.1
-  # Minimum neighbors
   min_neighbors: 5
-  # Minimum face size
   min_size: [100, 100]
