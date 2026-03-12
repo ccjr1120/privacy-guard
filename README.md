@@ -25,18 +25,6 @@ A macOS app that protects your screen privacy by blurring it when you step away.
 
 ## Installation
 
-### Prerequisites
-
-Face recognition requires `dlib` which needs CMake:
-
-```bash
-# Install CMake (required for dlib)
-brew install cmake
-
-# Install Python dependencies
-pip install -r requirements.txt
-```
-
 ### Option 1: Download Pre-built App
 Download from [Releases](../../releases)
 
@@ -47,15 +35,18 @@ Download from [Releases](../../releases)
 git clone https://github.com/ccjr1120/privacy-guard.git
 cd privacy-guard
 
-# 2. Install dependencies
-brew install cmake
+# 2. Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# 3. Install dependencies
 pip install -r requirements.txt
 
-# 3. Run
+# 4. Run
 python privacy_guard.py
 
 # Or build app bundle
-./build.sh
+./package.sh
 ```
 
 ## First Time Setup
@@ -116,7 +107,6 @@ snapshots_dir: "~/Pictures/PrivacyGuard"
 **Not recognizing me**
 - Try re-registering with different lighting
 - Lower the `recognition_tolerance` in config
-- Register multiple times with different appearances
 
 **Stranger not being detected**
 - Increase `recognition_tolerance` slightly

@@ -25,13 +25,13 @@ from PIL import Image, ImageFilter
 import numpy as np
 import io
 
-# Optional face recognition
+# Face recognition
 try:
     import face_recognition
     FACE_RECOGNITION_AVAILABLE = True
 except ImportError:
     FACE_RECOGNITION_AVAILABLE = False
-    print("Warning: face_recognition not available, falling back to basic detection")
+    print("Warning: face_recognition not available")
 
 
 class FaceDetectorThread(QThread):
