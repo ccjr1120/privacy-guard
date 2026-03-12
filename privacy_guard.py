@@ -15,13 +15,19 @@ import subprocess
 import pickle
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QMainWindow,
     QPushButton, QHBoxLayout
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QKeyEvent, QImage, QPixmap
-from PIL import Image, ImageFilter
+from PyQt6.QtGui import QKeyEvent, QImage, QPixmap, QPainter, QColor, QFont
+
+# UI components
+from ui.settings_window import SettingsWindow
+from ui.face_registration_dialog import FaceRegistrationDialog
+from ui.dashboard_window import DashboardWindow
+from PIL import Image, ImageFilter, ImageGrab
 import numpy as np
 import io
 
@@ -197,81 +203,145 @@ class FaceDetectorThread(QThread):
             self.camera.release()
 
 
+class _BlurCanvas(QWidget):
+    """Widget that paints the frosted glass overlay"""
+    
+    def __init__(self, overlay):
+        super().__init__(overlay)
+        self.overlay = overlay
+        
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        rect = self.rect()
+        
+        if self.overlay.blurred_pixmap and not self.overlay.blurred_pixmap.isNull():
+            painter.drawPixmap(rect, self.overlay.blurred_pixmap)
+            painter.fillRect(rect, QColor(255, 255, 255, 35))
+        else:
+            painter.fillRect(rect, QColor(240, 245, 255, 230))
+        
+        painter.setPen(QColor(60, 60, 80))
+        font = QFont()
+        font.setPointSize(48)
+        font.setBold(True)
+        painter.setFont(font)
+        text_rect = rect.adjusted(50, rect.height() // 3, -50, -50)
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, self.overlay.status_text)
+        
+        font.setPointSize(18)
+        font.setBold(False)
+        painter.setFont(font)
+        painter.setPen(QColor(100, 100, 120))
+        msg_rect = text_rect.adjusted(0, 80, 0, 0)
+        painter.drawText(msg_rect, Qt.AlignmentFlag.AlignCenter, self.overlay.msg_text)
+
+
 class BlurOverlay(QMainWindow):
-    """Full screen blur overlay window"""
+    """Full screen frosted glass overlay - captures and blurs screen content"""
     
     def __init__(self, blur_amount=20, allow_stranger_unlock=False):
         super().__init__()
         self.blur_amount = blur_amount
         self.allow_stranger_unlock = allow_stranger_unlock
+        self.blurred_pixmap = None
+        self.status_text = "Screen Locked"
+        self.msg_text = "Click anywhere to unlock"
         self.setup_ui()
         
     def setup_ui(self):
-        """Setup the blur overlay UI"""
+        """Setup the overlay window"""
         self.setWindowTitle("Privacy Guard")
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
             Qt.WindowType.Tool
         )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
         
-        # Get primary screen
+        # Get primary screen geometry
         screens = QApplication.screens()
         if screens:
             geometry = screens[0].geometry()
             self.setGeometry(geometry)
+        
+        self.central = _BlurCanvas(self)
+        self.setCentralWidget(self.central)
+        
+    def capture_and_blur_screen(self) -> Optional[QPixmap]:
+        """Capture screen and apply blur for frosted glass effect"""
+        try:
+            # Capture screen (requires Screen Recording permission on macOS)
+            screenshot = ImageGrab.grab()
+            if screenshot is None or screenshot.size[0] == 0:
+                return None
+                
+            # Resize for performance if needed, then blur
+            w, h = screenshot.size
+            scale = min(1.0, 800 / max(w, h)) if max(w, h) > 800 else 1.0
+            if scale < 1.0:
+                screenshot = screenshot.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
             
-        # Semi-transparent dark background
-        self.setStyleSheet("background-color: rgba(0, 0, 0, 200);")
+            # Gaussian blur for frosted glass effect
+            blurred = screenshot.filter(ImageFilter.GaussianBlur(radius=self.blur_amount))
+            
+            # Restore to original size if we scaled down
+            if scale < 1.0:
+                blurred = blurred.resize((w, h), Image.Resampling.LANCZOS)
+            
+            # Convert PIL to QPixmap
+            if blurred.mode != 'RGB':
+                blurred = blurred.convert('RGB')
+            data = blurred.tobytes('raw', 'RGB')
+            qimg = QImage(data, blurred.width, blurred.height, blurred.width * 3, QImage.Format.Format_RGB888)
+            return QPixmap.fromImage(qimg)
+        except Exception as e:
+            print(f"Screen capture failed: {e}, using fallback")
+            return None
+            
+    def showEvent(self, event):
+        """Refresh display when showing (capture done in blur_screen before show)"""
+        super().showEvent(event)
+        if self.blurred_pixmap is None:
+            self.blurred_pixmap = self.capture_and_blur_screen()
+        self.central.update()
         
-        # Central widget
-        central = QWidget()
-        self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
-        layout.setContentsMargins(50, 50, 50, 50)
-        layout.setSpacing(30)
+    def set_status(self, title: str, message: str):
+        """Update status text (called before show)"""
+        self.status_text = title
+        self.msg_text = message
+        self.central.update()
         
-        # Status label
-        self.status_label = QLabel("Screen Locked")
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setStyleSheet("""
-            QLabel {
-                color: #FF6B6B;
-                font-size: 64px;
-                font-weight: bold;
-                background-color: transparent;
-            }
-        """)
-        layout.addWidget(self.status_label)
-        
-        # Message label
-        self.msg_label = QLabel("Click anywhere to unlock")
-        self.msg_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.msg_label.setStyleSheet("""
-            QLabel {
-                color: #FFFFFF;
-                font-size: 24px;
-                background-color: transparent;
-            }
-        """)
-        layout.addWidget(self.msg_label)
-        
-        # Add stretch to center content
-        layout.addStretch()
+    def _make_label_proxy(self, attr: str):
+        """Create proxy for status_label/msg_label compatibility"""
+        class _LabelProxy:
+            def __init__(self, overlay, attr_name):
+                self._overlay = overlay
+                self._attr = attr_name
+            def setText(self, text):
+                setattr(self._overlay, self._attr, text)
+                self._overlay.central.update()
+        return _LabelProxy(self, attr)
+    
+    @property
+    def status_label(self):
+        return self._make_label_proxy('status_text')
+    
+    @property 
+    def msg_label(self):
+        return self._make_label_proxy('msg_text')
         
     def mousePressEvent(self, event):
-        """Handle mouse click - restore screen"""
         self.hide()
         
     def keyPressEvent(self, event: QKeyEvent):
-        """Handle key press - restore on any key"""
         self.hide()
 
 
 class PrivacyGuardApp(rumps.App):
     """Menu bar application"""
     
-    def __init__(self, config):
+    def __init__(self, config, config_path: str = "config.yaml"):
         super().__init__(
             name="PrivacyGuard",
             title="🔒",
@@ -280,12 +350,16 @@ class PrivacyGuardApp(rumps.App):
         )
         
         self.config = config
+        self.config_path = config_path
         self.qt_app = None
         self.blur_window = None
         self.face_thread = None
+        self.dashboard_window = None
         self.absence_count = 0
         self.is_blurred = False
         self.presence_log = []
+        self.presence_state = "present"  # present | away | returned
+        self._returned_timer = None
         self.owner_registered = self.check_owner_registered()
         
         # Setup menu
@@ -294,11 +368,21 @@ class PrivacyGuardApp(rumps.App):
         # Start Qt app
         self.init_qt()
         
+        # Process Qt events periodically (rumps uses Cocoa loop, Qt signals need processEvents)
+        self._qt_timer = rumps.Timer(self._process_qt_events, 0.2)
+        self._qt_timer.start()
+        
         # Start face detection
         if self.owner_registered or not FACE_RECOGNITION_AVAILABLE:
             self.start_detection()
         else:
             self.title = "⚠️"
+            
+    def _process_qt_events(self, _=None):
+        """Process pending Qt events so signals from face thread get handled"""
+        qt_app = QApplication.instance()
+        if qt_app:
+            qt_app.processEvents()
             
     def check_owner_registered(self) -> bool:
         """Check if owner face is registered"""
@@ -307,21 +391,26 @@ class PrivacyGuardApp(rumps.App):
         
     def setup_menu(self):
         """Setup menu bar items"""
-        self.menu = [
+        menu_items = [
             rumps.MenuItem("Status: Active" if self.owner_registered else "Status: No Owner Registered", callback=None),
+            None,
+            rumps.MenuItem("打开控制面板", callback=self.open_dashboard),
             None,
         ]
         
-        if not self.owner_registered and FACE_RECOGNITION_AVAILABLE:
-            self.menu.append(rumps.MenuItem("Register Owner Face", callback=self.register_owner))
-            self.menu.append(None)
+        if FACE_RECOGNITION_AVAILABLE:
+            label = "更新人脸" if self.owner_registered else "注册人脸"
+            menu_items.append(rumps.MenuItem(label, callback=self.register_owner))
+            menu_items.append(None)
             
-        self.menu.extend([
+        menu_items.extend([
             rumps.MenuItem("Manual Blur", callback=self.manual_blur),
             rumps.MenuItem("Show Log", callback=self.show_log),
             None,
-            rumps.MenuItem("Preferences", callback=self.show_preferences),
+            rumps.MenuItem("设置", callback=self.open_settings),
         ])
+        
+        self.menu = menu_items
         
     def init_qt(self):
         """Initialize Qt application"""
@@ -339,83 +428,67 @@ class PrivacyGuardApp(rumps.App):
         self.face_thread.start()
         
     def register_owner(self, _):
-        """Register owner's face"""
-        if not FACE_RECOGNITION_AVAILABLE:
-            rumps.alert("Face recognition not available")
-            return
-            
-        # Simple registration: capture current frame
-        try:
-            cap = cv2.VideoCapture(self.config['camera_index'])
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            
-            # Capture a few frames
-            encodings = []
-            for _ in range(5):
-                ret, frame = cap.read()
-                if ret:
-                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    face_locations = face_recognition.face_locations(rgb_frame)
-                    if face_locations:
-                        face_encoding = face_recognition.face_encodings(rgb_frame, face_locations)[0]
-                        encodings.append(face_encoding)
-                time.sleep(0.2)
-                
-            cap.release()
-            
-            if encodings:
-                # Use average of encodings
-                avg_encoding = np.mean(encodings, axis=0)
-                
-                if self.face_thread:
-                    self.face_thread.save_owner_face(avg_encoding)
-                    
-                self.owner_registered = True
-                self.title = "🔒"
-                self.menu[0].title = "Status: Active"
-                
-                # Remove register menu item
-                self.menu = [item for item in self.menu if not (hasattr(item, 'title') and item.title == "Register Owner Face")]
-                
-                # Start detection if not already running
-                if not self.face_thread:
-                    self.start_detection()
-                    
-                rumps.alert("✅ Owner face registered successfully!")
-            else:
-                rumps.alert("❌ No face detected. Please try again.")
-                
-        except Exception as e:
-            rumps.alert(f"Registration failed: {e}")
+        """Register owner's face - opens UI dialog"""
+        self.open_face_registration()
             
     def on_face_detected(self, detected: bool, count: int, is_owner: bool):
         """Handle face detection result"""
         if detected and is_owner:
-            # Owner detected
+            # Owner detected - 人回来
+            was_away = self.presence_state == "away"
             if self.absence_count > 0:
                 self.log_event("return", f"Owner detected ({count} face(s))")
                 if self.is_blurred and self.config.get('auto_restore', True):
                     self.restore_screen()
             self.absence_count = 0
+            self.presence_state = "returned" if was_away else "present"
+            self._update_dashboard_presence()
+            if was_away:
+                self._schedule_returned_reset()
         elif detected and not is_owner:
             # Stranger detected - stay blurred or blur immediately
             if not self.is_blurred and self.config.get('blur_on_stranger', True):
                 self.log_event("alert", f"Stranger detected ({count} face(s))")
                 self.blur_screen("Stranger Detected", "Only owner can unlock")
         else:
-            # No face detected
+            # No face detected - 人离开
             self.absence_count += 1
             threshold = self.config.get('absence_threshold', 3)
             
-            if self.absence_count >= threshold and not self.is_blurred:
-                self.log_event("leave", "No face detected")
-                self.blur_screen()
+            if self.absence_count >= threshold:
+                if self.presence_state != "away":
+                    self.log_event("leave", "No face detected")
+                self.presence_state = "away"
+                self._update_dashboard_presence()
+                # 不显示全屏遮罩，仅在面板显示状态
+                if self.is_blurred:
+                    pass  # 保持原有模糊状态
+                # 不再自动 blur_screen()
                 
     def on_snapshot_saved(self, path: str):
         """Handle snapshot saved"""
         print(f"Snapshot saved: {path}")
         
+    def _update_dashboard_presence(self):
+        """Update dashboard presence indicator if open"""
+        if self.dashboard_window and self.dashboard_window.isVisible():
+            self.dashboard_window.update_presence_indicator()
+    
+    def _schedule_returned_reset(self):
+        """Reset 'returned' to 'present' after a few seconds"""
+        if self._returned_timer:
+            self._returned_timer.stop()
+        self._returned_timer = rumps.Timer(lambda _: self._reset_returned_state(), 3)
+        self._returned_timer.start()
+    
+    def _reset_returned_state(self):
+        if self.presence_state == "returned":
+            self.presence_state = "present"
+            self._update_dashboard_presence()
+        if self._returned_timer:
+            self._returned_timer.stop()
+            self._returned_timer = None
+    
     def log_event(self, event_type: str, details: str):
         """Log presence event"""
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -432,6 +505,8 @@ class PrivacyGuardApp(rumps.App):
         if self.blur_window:
             self.blur_window.status_label.setText(title)
             self.blur_window.msg_label.setText(message)
+            # Capture screen BEFORE showing overlay (so we get clean content)
+            self.blur_window.blurred_pixmap = self.blur_window.capture_and_blur_screen()
             self.blur_window.showFullScreen()
             self.is_blurred = True
             self.title = "🔓"
@@ -465,19 +540,49 @@ class PrivacyGuardApp(rumps.App):
             
         rumps.alert(log_text)
         
-    def show_preferences(self, _):
-        """Show preferences"""
-        reg_status = "Registered" if self.owner_registered else "Not Registered"
+    def open_settings(self, _=None):
+        """Open settings window"""
+        config_path = Path(self.config_path)
+        if not config_path.is_absolute():
+            config_path = Path.cwd() / config_path
+        win = SettingsWindow(self.config, str(config_path), parent=None)
+        win.exec()
         
-        rumps.alert(
-            "Preferences",
-            f"Owner: {reg_status}\n"
-            f"Check Interval: {self.config.get('check_interval', 0.5)}s\n"
-            f"Absence Threshold: {self.config.get('absence_threshold', 3)}s\n"
-            f"Blur on Stranger: {self.config.get('blur_on_stranger', True)}\n"
-            f"Auto Restore: {self.config.get('auto_restore', True)}\n"
-            f"Save Snapshots: {self.config.get('save_snapshots', True)}"
-        )
+    def open_dashboard(self, _=None):
+        """Open dashboard/control panel"""
+        if self.dashboard_window is None or not self.dashboard_window.isVisible():
+            self.dashboard_window = DashboardWindow(self, parent=None)
+        self.dashboard_window.show()
+        self.dashboard_window.raise_()
+        self.dashboard_window.activateWindow()
+        
+    def open_face_registration(self):
+        """Open face registration dialog (stops detection during registration)"""
+        if not FACE_RECOGNITION_AVAILABLE:
+            rumps.alert("人脸识别库未安装")
+            return
+            
+        # Stop face detection to free camera
+        was_running = self.face_thread and self.face_thread.isRunning()
+        if was_running:
+            self.face_thread.running = False
+            self.face_thread.wait(3000)
+            
+        def on_success(_encoding):
+            self.owner_registered = True
+            self.title = "🔒"
+            if hasattr(self, 'menu') and self.menu:
+                for item in self.menu:
+                    if hasattr(item, 'title') and item.title == "Status: No Owner Registered":
+                        item.title = "Status: Active"
+                        break
+                        
+        dialog = FaceRegistrationDialog(self.config, on_success_callback=on_success)
+        dialog.exec()
+        
+        # Restart face detection
+        if was_running or self.owner_registered:
+            self.start_detection()
         
     def run(self):
         """Run the app"""
@@ -518,18 +623,37 @@ def load_config(path: str = "config.yaml") -> dict:
     return default_config
 
 
+def get_config_path(specified: str) -> str:
+    """Resolve config file path (handles packaged app)"""
+    import sys
+    if getattr(sys, 'frozen', False):
+        # Running as packaged app - use user dir (Resources may be read-only)
+        data_dir = Path.home() / '.privacyguard'
+        data_dir.mkdir(parents=True, exist_ok=True)
+        user_config = data_dir / 'config.yaml'
+        # Copy from bundle if user config doesn't exist
+        bundle_config = Path(sys.executable).parent / 'Resources' / Path(specified).name
+        if not user_config.exists() and bundle_config.exists():
+            import shutil
+            shutil.copy(bundle_config, user_config)
+        return str(user_config)
+    return specified
+
+
 def main():
     parser = argparse.ArgumentParser(description='Privacy Guard - Smart Screen Privacy Shield')
     parser.add_argument('--config', '-c', default='config.yaml', help='Configuration file path')
     args = parser.parse_args()
     
+    config_path = get_config_path(args.config)
+    
     if not FACE_RECOGNITION_AVAILABLE:
         print("⚠️  face_recognition not installed. Running in basic mode (any face unlocks).")
         print("   To enable owner-only mode: pip install face-recognition dlib")
     
-    config = load_config(args.config)
+    config = load_config(config_path)
     
-    app = PrivacyGuardApp(config)
+    app = PrivacyGuardApp(config, config_path=config_path)
     
     try:
         app.run()

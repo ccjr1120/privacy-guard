@@ -38,3 +38,5 @@ env/
 
 # Project
 *.log
+*.dmg
+dist_dmg/

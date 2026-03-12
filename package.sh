@@ -43,7 +43,18 @@ source venv/bin/activate
 # Install dependencies
 echo "📥 Installing dependencies..."
 pip install --upgrade pip
-pip install -r requirements.txt
+
+# Install dlib-bin first (precompiled, avoids build issues)
+echo "📦 Installing dlib-bin..."
+pip install dlib-bin
+
+# Install other dependencies (excluding dlib to avoid compilation)
+echo "📦 Installing other dependencies..."
+pip install rumps PyQt6 pyyaml opencv-python numpy pillow py2app
+
+# Install face-recognition without deps since we have dlib-bin
+pip install face-recognition --no-deps
+pip install Click face-recognition-models
 
 # Build app bundle
 echo ""
