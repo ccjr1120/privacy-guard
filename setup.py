@@ -12,8 +12,8 @@ DATA_FILES = [
 ]
 OPTIONS = {
     'argv_emulation': True,
-    'packages': ['rumps', 'cv2', 'yaml', 'PIL', 'PyQt6'],
-    'includes': ['numpy', 'subprocess', 'datetime', 'pathlib', 'io'],
+    'packages': ['rumps', 'cv2', 'yaml', 'PIL', 'PyQt6', 'face_recognition', 'dlib'],
+    'includes': ['numpy', 'subprocess', 'datetime', 'pathlib', 'io', 'pickle', 'PIL.ImageFilter'],
     'excludes': ['tkinter', 'matplotlib'],
     'iconfile': None,  # Can add .icns file here
     'plist': {
